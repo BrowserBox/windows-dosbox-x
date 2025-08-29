@@ -96,6 +96,19 @@ require_iso() {
   warn "Missing ISO: $path. Place your legally-obtained ISO there (or set \$$envvar)."
   exit 1
 }
+is_iso_bootable() {
+  local iso="$1"
+  local temp_vm="$BASE/temp_check"
+  mkdir -p "$temp_vm"
+  run_dbx "$temp_vm" -c "IMGMOUNT d \"$iso\" -t iso -ide 2m" -c "IMGMOUNT a -bootcd d" -c "EXIT" || true
+  if grep -q "El Torito CD-ROM boot record not found" "$(logfile_for "$temp_vm")"; then
+    rm -rf "$temp_vm"
+    return 1  # not bootable
+  else
+    rm -rf "$temp_vm"
+    return 0  # bootable
+  fi
+}
 # ---- disk image creation (preformatted) -------------------------------------
 # We create a READY-TO-USE C: (FAT) so Setup never targets Z:
 make_hdd_img() {
@@ -127,8 +140,8 @@ make_hdd_img() {
 }
 # ---- conf writers -----------------------------------------------------------
 write_conf() {
-  # $1 = vm dir, $2 = oskey, $3 = mode (install|run), $4 = iso (opt), $5 = floppy (opt)
-  local vm="$1" oskey="$2" mode="$3" iso="${4:-}" floppy="${5:-}"
+  # $1 = vm dir, $2 = oskey, $3 = mode (install|run), $4 = iso (opt), $5 = floppy (opt), $6 = bootable_iso (opt, for install)
+  local vm="$1" oskey="$2" mode="$3" iso="${4:-}" floppy="${5:-}" bootable_iso="${6:-0}"
   local conf="$vm/${oskey}-${mode}.conf"
   local mem="64" ver="7.0" title="Windows 9x/NT VM" cpu="pentium_mmx" core="normal" vmem="8" voodoo="true"
   case "$oskey" in
@@ -197,28 +210,42 @@ EOF
         ;;
       win95|win98)
         [ -n "$iso" ] || die "install mode needs ISO"
-        # Decide 9x subdir and setup command from oskey
-        local nine_dir="WIN95"
-        local setup_cmd="SETUP"
-        if [ "$oskey" = "win98" ]; then
-          nine_dir="WIN98"
-          setup_cmd="SETUP /IS"
-        fi
-        if [ "${AUTO_INSTALL_9X:-0}" = "1" ]; then
-          # Auto-install path: copy files to C:\WIN9x and run setup
+        if [ "$bootable_iso" = "1" ]; then
+          # Method 1: Boot from bootable ISO
           cat >>"$conf" <<EOF
 IMGMOUNT d "$iso" -t iso -ide 2m
+IMGMOUNT a -bootcd d
+BOOT a:
+EOF
+        else
+          # Method 2: Non-bootable, copy and run setup
+          # Decide 9x subdir and setup command from oskey
+          local nine_dir="WIN95"
+          local setup_cmd="SETUP"
+          if [ "$oskey" = "win98" ]; then
+            nine_dir="WIN98"
+            setup_cmd="SETUP /IS"
+          fi
+          if [ "${AUTO_INSTALL_9X:-0}" = "1" ]; then
+            # Auto-install path: copy files to C:\WIN9x and run setup
+            cat >>"$conf" <<EOF
+IMGMOUNT d "$iso" -t iso -ide 2m
 c:
+ECHO Checking for $nine_dir on D:
+IF NOT EXIST D:\\$nine_dir\\SETUP.EXE ECHO No SETUP.EXE in D:\\$nine_dir - check ISO contents or dir name
 IF NOT EXIST C:\\$nine_dir MD C:\\$nine_dir
+IF EXIST D:\\$nine_dir\\SETUP.EXE ECHO Starting xcopy from D:\\$nine_dir to C:\\$nine_dir
 IF EXIST D:\\$nine_dir\\SETUP.EXE XCOPY D:\\$nine_dir C:\\$nine_dir /I /E >NUL
+ECHO xcopy complete or skipped
 c:
 CD \\$nine_dir
+ECHO Starting setup: $setup_cmd
 $setup_cmd
 PROMPT \$P\$G
 EOF
-        else
-          # Manual path: mount and show instructions
-          cat >>"$conf" <<EOF
+          else
+            # Manual path: mount and show instructions
+            cat >>"$conf" <<EOF
 IMGMOUNT d "$iso" -t iso -ide 2m
 ECHO.
 ECHO === Windows 9x Install ===
@@ -229,6 +256,7 @@ ECHO $setup_cmd
 ECHO.
 PROMPT \$P\$G
 EOF
+          fi
         fi
         ;;
     esac
@@ -291,21 +319,37 @@ cmd_attach_iso() {
   [ -n "$oskey" ] && [ -n "$iso_path" ] || die "Usage: $0 attach-iso <oskey> </path/to.iso>"
   [ -f "$iso_path" ] || die "ISO not found: $iso_path"
   cp -f "$iso_path" "$ISOS/" || die "Copy failed"
-  say "Copied ISO to $ISOS/$(basename "$iso_path")"
+  local copied_name="$(basename "$iso_path")"
+  local expected=""
+  case "$oskey" in
+    win95) expected="Win95.iso" ;;
+    win98) expected="Win98SE.iso" ;;
+    winnt4) expected="WinNT4.iso" ;;
+    win2000) expected="Win2000.iso" ;;
+    *) die "Unknown oskey for expected ISO name: $oskey" ;;
+  esac
+  if [ "$copied_name" != "$expected" ]; then
+    mv "$ISOS/$copied_name" "$ISOS/$expected" || die "Rename failed"
+    say "Renamed to $ISOS/$expected for consistency"
+  fi
+  say "Copied ISO to $ISOS/$expected"
 }
 cmd_install() {
   local oskey="${1:-}"; [ -n "$oskey" ] || die "Usage: $0 install <oskey>"
   mkdirs; install_dosboxx
   make_vm "$oskey"
-  local iso="" floppy=""
+  local iso="" floppy="" bootable_iso=0
   case "$oskey" in
     win95)
       iso="$(require_iso Win95.iso)"
-      write_conf "$VMS/$oskey" "$oskey" "install" "$iso"
+      # Force method 2 for Win95 per guide
+      bootable_iso=0
+      write_conf "$VMS/$oskey" "$oskey" "install" "$iso" "" "$bootable_iso"
       ;;
     win98)
       iso="$(require_iso Win98SE.iso)"
-      write_conf "$VMS/$oskey" "$oskey" "install" "$iso"
+      is_iso_bootable "$iso" && bootable_iso=1
+      write_conf "$VMS/$oskey" "$oskey" "install" "$iso" "" "$bootable_iso"
       ;;
     winnt4)
       iso="$(require_iso WinNT4.iso)"
