@@ -185,6 +185,10 @@ int13fakev86io=true
 cd-rom insertion delay=4000
 [render]
 scaler=none
+[ne2000]
+ne2000=true
+nicirq=10
+backend=slirp
 [autoexec]
 @echo off
 REM HDD (primary master) - preformatted FAT, appears as C:
