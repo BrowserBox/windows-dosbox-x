@@ -16,7 +16,7 @@ Environment:
   AUTO_INSTALL_9X=1 For Win95/98: auto copy setup files to C: and run SETUP
   *_ISO_URL Optional per-ISO URLs, e.g. WIN98SE_ISO_URL
 Notes:
-  • ISOs go in /Users/cris/dosboxx/vms/isos (Win95.iso, Win98SE.iso, WinNT4.iso, Win2000.iso)
-  • NT4 needs a boot floppy at /Users/cris/dosboxx/vms/boot/nt4-boot.img
-  • Logs: /Users/cris/dosboxx/vms/<oskey>/last-dosboxx.log
+  • ISOs go in ~/dosboxx/vms/isos (Win95.iso, Win98SE.iso, WinNT4.iso, Win2000.iso)
+  • NT4 needs a boot floppy at ~/dosboxx/vms/boot/nt4-boot.img
+  • Logs: ~/dosboxx/vms/<oskey>/last-dosboxx.log
 
